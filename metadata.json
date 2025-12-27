@@ -1,0 +1,8 @@
+{
+  "name": "工体·燃冬冰雪嘉年华",
+  "description": "工体·三里屯商圈打卡赢好礼，碰一碰NFC解锁商家优惠券与惊喜团购福利。",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
