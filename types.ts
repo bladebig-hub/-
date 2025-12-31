@@ -25,6 +25,7 @@ export interface WalletItem {
   value?: string;
   date: string;
   description?: string;
+  imageUrl?: string;
 }
 
 export interface Merchant {

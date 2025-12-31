@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Scan, 
   Map as MapIcon, 
@@ -20,7 +20,8 @@ import {
   Puzzle,
   Store,
   QrCode,
-  Copy
+  Copy,
+  Clock
 } from 'lucide-react';
 import { AppView, Merchant, Reward, UserState, GrandPrize, WalletItem } from './types.ts';
 import { generateCheckInMessage, generateLuckyFortune, generateNextStopRecommendation } from './services/geminiService.ts';
@@ -68,19 +69,28 @@ const MOCK_MERCHANTS: Merchant[] = [
 
 const CATEGORIES = ['全部', '餐饮', '娱乐', '零售', '酒吧'];
 
+const BANNER_IMAGES = [
+  'https://picsum.photos/seed/winter_sport_skiing/800/400',
+  'https://picsum.photos/seed/ice_skating_rink/800/400', 
+  'https://picsum.photos/seed/snow_festival_lights/800/400',
+  'https://picsum.photos/seed/snowboard_jump_action/800/400'
+];
+
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>(AppView.HOME);
   const [isScanning, setIsScanning] = useState(false);
   
+  // Banner State
+  const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
+
   // Search & Filter State
-  const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('全部');
 
   // Gemini Content State
   const [geminiMessage, setGeminiMessage] = useState<string>('');
   const [geminiFortune, setGeminiFortune] = useState<string>('');
   const [nextStopGuide, setNextStopGuide] = useState<string>('');
-  const [selectedReward, setSelectedReward] = useState<WalletItem | null>(null); // Changed to WalletItem for fuller context
+  const [selectedReward, setSelectedReward] = useState<WalletItem | null>(null);
 
   // User State
   const [userState, setUserState] = useState<UserState>({
@@ -91,6 +101,18 @@ export default function App() {
       { id: 'w1', type: 'FRAGMENT', title: '初始碎片', date: '2023-12-01', description: '新手大礼包赠送' }
     ]
   });
+
+  // --- Effects ---
+  
+  // Banner Autoplay
+  useEffect(() => {
+    if (currentView === AppView.HOME) {
+      const interval = setInterval(() => {
+        setCurrentBannerIndex(prev => (prev + 1) % BANNER_IMAGES.length);
+      }, 4000);
+      return () => clearInterval(interval);
+    }
+  }, [currentView]);
 
   // Derived State
   const currentPrize = useMemo(() => 
@@ -103,12 +125,11 @@ export default function App() {
 
   const filteredMerchants = useMemo(() => {
     return MOCK_MERCHANTS.filter(m => {
-      const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          m.offerTitle.toLowerCase().includes(searchQuery.toLowerCase());
+      // Removed search query logic as search bar is removed
       const matchesCategory = selectedCategory === '全部' || m.category === selectedCategory;
-      return matchesSearch && matchesCategory;
+      return matchesCategory;
     });
-  }, [searchQuery, selectedCategory]);
+  }, [selectedCategory]);
 
   // -- Handlers --
 
@@ -126,48 +147,48 @@ export default function App() {
     }
     
     const nextMerchant = upcomingMerchants[0];
+    const newFragmentCount = userState.collectedFragments + 1;
 
-    // Reduced delay to 700ms for snappier feel
-    setTimeout(async () => {
-      setIsScanning(false);
-      
-      // Update User State
-      const newFragmentCount = userState.collectedFragments + 1;
-      
-      // Add History
-      setUserState(prev => ({
-        ...prev,
-        history: [...prev.history, nextMerchant],
-        collectedFragments: newFragmentCount,
-      }));
+    // Parallel execution for speed (Targeting ~2 seconds total perception)
+    const minDelayPromise = new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const geminiPromise = (async () => {
+       try {
+         const [msg, guide] = await Promise.all([
+            generateCheckInMessage(nextMerchant.name, newFragmentCount),
+            upcomingMerchants.length > 1 
+              ? generateNextStopRecommendation(newFragmentCount, upcomingMerchants[1].name)
+              : Promise.resolve("最后冲刺！集齐碎片召唤大奖！")
+         ]);
+         return { msg, guide };
+       } catch (e) {
+         return { msg: "打卡成功！", guide: "" };
+       }
+    })();
 
-      // Call Gemini
-      const [msg, guide] = await Promise.all([
-        generateCheckInMessage(nextMerchant.name, newFragmentCount),
-        upcomingMerchants.length > 1 
-          ? generateNextStopRecommendation(newFragmentCount, upcomingMerchants[1].name)
-          : Promise.resolve("最后冲刺！集齐碎片召唤大奖！")
-      ]);
-      
-      setGeminiMessage(msg);
-      setNextStopGuide(guide);
+    // Wait for both
+    const [_, geminiResult] = await Promise.all([minDelayPromise, geminiPromise]);
+    
+    setIsScanning(false);
+    setGeminiMessage(geminiResult.msg);
+    setNextStopGuide(geminiResult.guide);
 
-      // Check for Mission Completion
-      if (newFragmentCount >= currentPrize.totalFragments) {
-         // We will handle completion redirect AFTER they open the box
-      }
+    // Update User State
+    setUserState(prev => ({
+      ...prev,
+      history: [...prev.history, nextMerchant],
+      collectedFragments: newFragmentCount,
+    }));
 
-      setCurrentView(AppView.CHECK_IN_SUCCESS);
-    }, 700);
+    setCurrentView(AppView.CHECK_IN_SUCCESS);
   };
 
   const handleSelectReward = async (type: 'RED_PACKET' | 'COUPON') => {
-    // Reduced delay for opening box
-    setTimeout(async () => {
+    // Parallel execution for speed (Targeting ~2 seconds)
+    const minDelayPromise = new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const prepareRewardPromise = (async () => {
         const fortune = await generateLuckyFortune();
-        setGeminiFortune(fortune);
-
-        // Pick a random merchant to make the reward concrete and real
         const randomMerchant = MOCK_MERCHANTS[Math.floor(Math.random() * MOCK_MERCHANTS.length)];
         
         let newReward: WalletItem;
@@ -179,7 +200,8 @@ export default function App() {
               title: randomMerchant.offerTitle, 
               value: randomMerchant.price || '5折', 
               date: new Date().toLocaleDateString(),
-              description: `适用商户：${randomMerchant.name}`
+              description: `适用商户：${randomMerchant.name}`,
+              imageUrl: randomMerchant.imageUrl
           };
         } else {
            newReward = { 
@@ -188,28 +210,35 @@ export default function App() {
                title: '50元代金券', 
                value: '¥50', 
                date: new Date().toLocaleDateString(),
-               description: `适用商户：${randomMerchant.name} (满200可用)`
+               description: `适用商户：${randomMerchant.name} (满200可用)`,
+               imageUrl: randomMerchant.imageUrl
             };
         }
-        
-        // Also Add Fragment to Wallet
-        const currentMerchant = userState.history[userState.history.length-1];
-        const fragmentItem: WalletItem = {
-           id: `frag-${Date.now()}`,
-           type: 'FRAGMENT',
-           title: '任务碎片',
-           description: `来自: ${currentMerchant?.name || '打卡'}`,
-           date: new Date().toLocaleDateString()
-        };
+        return { fortune, newReward };
+    })();
 
-        setUserState(prev => ({
-          ...prev,
-          wallet: [fragmentItem, newReward, ...prev.wallet]
-        }));
+    const [_, result] = await Promise.all([minDelayPromise, prepareRewardPromise]);
+    const { fortune, newReward } = result;
 
-        setSelectedReward(newReward);
-        setCurrentView(AppView.REWARD_CLAIMED);
-    }, 600);
+    setGeminiFortune(fortune);
+    
+    // Add Fragment logic
+    const currentMerchant = userState.history[userState.history.length-1];
+    const fragmentItem: WalletItem = {
+        id: `frag-${Date.now()}`,
+        type: 'FRAGMENT',
+        title: '任务碎片',
+        description: `来自: ${currentMerchant?.name || '打卡'}`,
+        date: new Date().toLocaleDateString()
+    };
+
+    setUserState(prev => ({
+        ...prev,
+        wallet: [fragmentItem, newReward, ...prev.wallet]
+    }));
+
+    setSelectedReward(newReward);
+    setCurrentView(AppView.REWARD_CLAIMED);
   };
 
   const handleClaimSuccess = () => {
@@ -275,29 +304,43 @@ export default function App() {
 
   const renderHome = () => (
     <div className="pb-24 bg-gray-50 min-h-screen">
-      {/* 1. Top Banner */}
-      <div className="w-full h-56 relative overflow-hidden">
-         <img 
-            src="https://picsum.photos/seed/winter_festival_scene/800/600" 
-            className="w-full h-full object-cover" 
-            alt="Event Banner" 
-         />
-         <div className="absolute inset-0 bg-gradient-to-t from-gray-50 via-transparent to-black/30"></div>
+      {/* 1. Top Banner - Carousel - Reduced Height */}
+      <div className="w-full h-40 relative overflow-hidden">
+         {BANNER_IMAGES.map((img, idx) => (
+           <img 
+              key={idx}
+              src={img} 
+              className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${idx === currentBannerIndex ? 'opacity-100' : 'opacity-0'}`}
+              alt={`Event Banner ${idx}`} 
+           />
+         ))}
          
+         <div className="absolute inset-0 bg-gradient-to-t from-gray-50 via-transparent to-black/20"></div>
+         
+         {/* Carousel Dots */}
+         <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
+            {BANNER_IMAGES.map((_, idx) => (
+              <div 
+                key={idx} 
+                className={`w-1.5 h-1.5 rounded-full transition-all ${idx === currentBannerIndex ? 'bg-white w-3' : 'bg-white/50'}`}
+              ></div>
+            ))}
+         </div>
+
          {/* Enhanced Wallet Entrance */}
          <div className="absolute top-4 right-4 z-20">
             <button 
               onClick={() => setCurrentView(AppView.WALLET)}
-              className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-rose-500 text-white px-4 py-2 rounded-full shadow-lg border-2 border-white/30 backdrop-blur-md active:scale-95 transition-transform"
+              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-full shadow-lg border border-white/30 backdrop-blur-md active:scale-95 transition-transform"
             >
-              <ShoppingBag size={18} fill="white" />
-              <span className="text-sm font-bold tracking-wide">我的卡包</span>
+              <ShoppingBag size={16} fill="white" />
+              <span className="text-xs font-bold tracking-wide">我的卡包</span>
             </button>
          </div>
       </div>
 
-      {/* 2. Target Prize Card (Floating up) */}
-      <div className="px-5 -mt-16 relative z-10">
+      {/* 2. Target Prize Card (Floating up less due to smaller banner) */}
+      <div className="px-5 -mt-6 relative z-10">
         <div className="bg-white rounded-2xl shadow-xl p-5 border border-blue-50">
           <div className="flex justify-between items-center mb-4">
              <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1">
@@ -373,26 +416,14 @@ export default function App() {
         </div>
       </div>
 
-      {/* 3. Merchant List & Search */}
+      {/* 3. Merchant List & Search - Removed Search Input */}
       <div className="px-5 mt-8">
-         <div className="sticky top-0 bg-gray-50 z-20 pb-2 transition-all">
-            <h2 className="font-extrabold text-xl text-gray-900 mb-3 flex items-center">
+         <div className="sticky top-0 bg-gray-50 z-20 pb-2 transition-all pt-2">
+            <h2 className="font-extrabold text-xl text-gray-900 mb-4 flex items-center">
                <Flame className="text-rose-500 mr-2" fill="currentColor" size={20} />
                活动周边优惠大放送
             </h2>
             
-            {/* Search Bar */}
-            <div className="relative mb-3">
-               <input 
-                 type="text" 
-                 placeholder="搜索商户、团购或优惠券..."
-                 value={searchQuery}
-                 onChange={(e) => setSearchQuery(e.target.value)}
-                 className="w-full pl-10 pr-4 py-2.5 rounded-xl border-none shadow-sm bg-white text-sm focus:ring-2 focus:ring-rose-500 outline-none placeholder-gray-400"
-               />
-               <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-            </div>
-
             {/* Category Tabs */}
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
               {CATEGORIES.map(cat => (
@@ -481,8 +512,16 @@ export default function App() {
           
           {/* Brand Exposure Card */}
           <div className="w-full bg-white/10 backdrop-blur-md border border-white/20 rounded-3xl p-6 mb-8 text-center shadow-2xl animate-fade-in-up">
-            <div className="w-20 h-20 rounded-2xl overflow-hidden mx-auto border-4 border-white shadow-lg -mt-16 mb-4 relative">
-              <img src={lastVisited.imageUrl} alt={lastVisited.name} className="w-full h-full object-cover" />
+            
+            {/* Merchant Image */}
+            <div className="w-full h-32 rounded-xl overflow-hidden mb-4 shadow-inner relative">
+                <img src={lastVisited.imageUrl} alt={lastVisited.name} className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-black/20"></div>
+            </div>
+
+            {/* Logo Overlay */}
+            <div className="w-20 h-20 rounded-full overflow-hidden mx-auto border-4 border-white shadow-lg -mt-14 mb-3 relative z-10 bg-white">
+              <img src={`https://picsum.photos/seed/logo_${lastVisited.id}/100/100`} alt="Logo" className="w-full h-full object-cover" />
             </div>
             
             <h2 className="text-white text-xl font-bold mb-1">打卡成功</h2>
@@ -513,13 +552,6 @@ export default function App() {
                 </span>
              </div>
           </div>
-
-          {/* Next Step AI Guide (Optional, smaller) */}
-          {nextStopGuide && (
-             <div className="mb-8 text-center text-slate-400 text-xs px-8">
-                <span className="text-blue-400 font-bold">NEXT:</span> {nextStopGuide}
-             </div>
-          )}
 
           <Button 
             onClick={() => setCurrentView(AppView.REWARD_SELECTION)} 
@@ -575,67 +607,80 @@ export default function App() {
     if (!selectedReward) return null;
 
     return (
-        <div className="h-screen flex flex-col bg-gray-100 px-4 py-8 overflow-y-auto">
-            <div className="flex-1 flex flex-col items-center justify-center max-w-sm mx-auto w-full">
-                
-                <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-                    <Sparkles className="text-yellow-500 mr-2" fill="currentColor" />
-                    恭喜获得商家福利
-                </h2>
+        <div className="h-screen flex flex-col relative overflow-hidden">
+            {/* Ceremonial Background */}
+            <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900"></div>
+            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 animate-pulse"></div>
+            
+            {/* Light Rays Effect */}
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-gradient-to-b from-rose-500/20 to-transparent blur-3xl"></div>
 
-                {/* Realistic Ticket Design */}
-                <div className="w-full bg-white rounded-2xl overflow-hidden shadow-xl relative mb-8">
-                    {/* Ticket Header (Color band) */}
-                    <div className="h-3 bg-gradient-to-r from-rose-500 to-orange-500"></div>
+            <div className="flex-1 flex flex-col items-center justify-center max-w-sm mx-auto w-full px-4 relative z-10">
+                
+                <div className="mb-6 text-center animate-fade-in-down">
+                  <div className="inline-block p-3 bg-yellow-400/20 rounded-full backdrop-blur-sm mb-2 border border-yellow-400/50">
+                    <Gift size={32} className="text-yellow-300" />
+                  </div>
+                  <h2 className="text-2xl font-bold text-white tracking-wide">恭喜获得商家好礼</h2>
+                  <p className="text-purple-200 text-sm">已自动存入卡包</p>
+                </div>
+
+                {/* Ritualistic Ticket Design */}
+                <div className="w-full bg-white rounded-2xl overflow-hidden shadow-2xl relative mb-8 transform hover:scale-105 transition-transform duration-500">
+                    {/* Product Image Area */}
+                    <div className="h-40 w-full relative">
+                       <img src={selectedReward.imageUrl} className="w-full h-full object-cover" alt="Product" />
+                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+                       <div className="absolute bottom-3 left-4 text-white">
+                          <div className="text-xs font-bold opacity-80 uppercase tracking-widest">Rewards</div>
+                          <div className="text-lg font-bold">{selectedReward.title}</div>
+                       </div>
+                    </div>
                     
                     {/* Ticket Body */}
-                    <div className="p-6 pb-8">
-                        {/* Merchant Header */}
-                        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-dashed border-gray-200">
-                           <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0">
-                              <Store size={24} className="text-gray-500" />
+                    <div className="p-6">
+                        {/* Value & Content */}
+                        <div className="flex justify-between items-center mb-6">
+                           <div>
+                              <div className="text-sm text-gray-500 mb-1">优惠价值</div>
+                              <div className="text-4xl font-black text-rose-600 tracking-tighter">{selectedReward.value}</div>
                            </div>
-                           <div className="flex-1">
-                              <div className="text-xs text-gray-400 font-bold uppercase tracking-wider">Merchant</div>
-                              <div className="font-bold text-gray-800 leading-tight">{selectedReward.description?.split('：')[1] || '活动合作商户'}</div>
+                           <div className="text-right">
+                              <div className="bg-rose-50 text-rose-600 px-3 py-1 rounded-lg text-xs font-bold mb-1 inline-block border border-rose-100">
+                                仅限今日
+                              </div>
+                              <div className="text-xs text-gray-400">满额可用</div>
                            </div>
                         </div>
 
-                        {/* Value Area */}
-                        <div className="text-center mb-6">
-                           <div className="text-5xl font-black text-rose-600 tracking-tighter mb-1">{selectedReward.value}</div>
-                           <div className="text-lg font-bold text-gray-800">{selectedReward.title}</div>
-                           <div className="inline-block mt-2 px-3 py-1 bg-rose-50 text-rose-600 text-xs font-bold rounded-full">
-                              有效期至: 2024-02-28
-                           </div>
+                        {/* Dashed Line */}
+                        <div className="border-t-2 border-dashed border-gray-100 my-4 relative">
+                           <div className="absolute -left-8 -top-3 w-6 h-6 bg-gray-900 rounded-full"></div>
+                           <div className="absolute -right-8 -top-3 w-6 h-6 bg-gray-900 rounded-full"></div>
                         </div>
 
                         {/* Barcode / QR Simulation */}
-                        <div className="bg-gray-50 rounded-xl p-4 flex items-center justify-between border border-gray-100">
-                           <QrCode size={48} className="text-gray-800" />
-                           <div className="text-right">
-                              <div className="text-[10px] text-gray-400 mb-1">核销码 (点击复制)</div>
-                              <div className="text-lg font-mono font-bold text-gray-700 tracking-widest flex items-center gap-2">
-                                 BW-9527-88
-                                 <Copy size={14} className="text-gray-400" />
+                        <div className="flex items-center justify-between gap-4">
+                           <div className="flex-1">
+                              <div className="text-[10px] text-gray-400 mb-1 uppercase">Code</div>
+                              <div className="font-mono font-bold text-gray-800 text-lg tracking-widest">
+                                 RW-{(Math.random()*10000).toFixed(0)}
                               </div>
                            </div>
+                           <QrCode size={40} className="text-gray-800" />
                         </div>
-                    </div>
-
-                    {/* Sawtooth / Perforation effect at bottom */}
-                    <div className="relative h-4 bg-gray-100 -mt-2">
-                        <div className="absolute top-0 left-0 w-full h-2 bg-[radial-gradient(circle,transparent_5px,#fff_5px)] bg-[length:16px_16px] bg-[position:-8px_-8px]"></div>
                     </div>
                 </div>
 
                 {/* Fortune Cookie */}
-                <div className="bg-orange-50 text-orange-900/80 px-5 py-3 rounded-lg text-sm italic font-medium mb-8 border border-orange-200/50 shadow-sm max-w-xs text-center">
+                <div className="bg-white/10 backdrop-blur text-purple-100 px-6 py-4 rounded-xl text-sm italic font-medium mb-8 border border-white/10 shadow-lg max-w-xs text-center relative">
+                   <Sparkles size={16} className="absolute -top-2 -left-2 text-yellow-300 animate-spin-slow" />
                    " {geminiFortune} "
+                   <Sparkles size={16} className="absolute -bottom-2 -right-2 text-yellow-300 animate-spin-slow" />
                 </div>
 
-                <Button onClick={handleClaimSuccess} fullWidth className="bg-gray-900 text-white shadow-xl">
-                    收入卡包并继续
+                <Button onClick={handleClaimSuccess} fullWidth className="bg-gradient-to-r from-yellow-400 to-orange-500 text-white shadow-[0_0_20px_rgba(234,179,8,0.4)] border-none text-lg py-4">
+                    立即使用 / 存入卡包
                 </Button>
             </div>
         </div>
@@ -677,10 +722,12 @@ export default function App() {
                    <div className="absolute -right-4 -top-4 w-16 h-16 bg-gray-50 rounded-full z-0"></div>
                    
                    <div className="flex items-center gap-3 relative z-10">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                         item.type === 'RED_PACKET' ? 'bg-red-100 text-red-500' : 'bg-blue-100 text-blue-500'
-                      }`}>
-                         <Ticket size={18} />
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden border border-gray-100 ${!item.imageUrl ? (item.type === 'RED_PACKET' ? 'bg-red-100 text-red-500' : 'bg-blue-100 text-blue-500') : ''}`}>
+                         {item.imageUrl ? (
+                             <img src={item.imageUrl} alt="icon" className="w-full h-full object-cover" />
+                         ) : (
+                             <Ticket size={18} />
+                         )}
                       </div>
                       <div>
                          <h4 className="font-bold text-gray-800">{item.title}</h4>
