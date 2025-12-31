@@ -139,8 +139,10 @@ export default function App() {
   // When view changes to HOME, check if we need to animate (e.g. fragments increased recently)
   useEffect(() => {
     if (currentView === AppView.HOME) {
+       // Only animate if we think there was a recent change or for demo "alive" feeling
+       // For this demo, we animate every time user returns to home to make it "obvious" as requested
        setProgressAnimating(true);
-       const timer = setTimeout(() => setProgressAnimating(false), 2500); // Longer animation time
+       const timer = setTimeout(() => setProgressAnimating(false), 3000); 
        return () => clearTimeout(timer);
     }
   }, [currentView]);
@@ -207,10 +209,11 @@ export default function App() {
 
   const handleClaimRedPacket = () => {
      setShowRedPacket(false);
+     const currentMerchant = userState.history[userState.history.length - 1];
      const redPacket: WalletItem = {
         id: `rp-${Date.now()}`,
         type: 'RED_PACKET',
-        title: '店铺现金红包',
+        title: `${currentMerchant?.name || '店铺'}现金红包`,
         value: '¥7.58',
         date: new Date().toLocaleDateString(),
         description: '到店支付抵扣',
@@ -408,28 +411,37 @@ export default function App() {
               <h3 className="font-bold text-lg text-gray-900 leading-tight mb-1">{currentPrize.name}</h3>
               <p className="text-xs text-gray-500 mb-3 line-clamp-2">{currentPrize.description}</p>
               
-              {/* Fragment Progress with Animation */}
+              {/* Fragment Progress with Intense Animation */}
               <div className="space-y-1.5">
                 <div className="flex justify-between text-xs font-semibold">
-                  <span className={`transition-colors duration-300 ${progressAnimating ? 'text-red-600 scale-105' : 'text-rose-500'}`}>收集进度</span>
-                  <span className={`text-gray-600 transition-all duration-300 ${progressAnimating ? 'font-bold scale-110' : ''}`}>
+                  <span className={`transition-colors duration-300 ${progressAnimating ? 'text-red-600 scale-105 font-bold' : 'text-rose-500'}`}>收集进度</span>
+                  <span className={`text-gray-600 transition-all duration-300 ${progressAnimating ? 'font-bold scale-110 text-rose-600' : ''}`}>
                     {userState.collectedFragments} / {currentPrize.totalFragments}
                   </span>
                 </div>
-                <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                
+                {/* Outer Container with Shake */}
+                <div className={`w-full bg-gray-100 rounded-full h-3 overflow-hidden border border-gray-100 ${progressAnimating ? 'animate-shake ring-2 ring-rose-200' : ''}`}>
+                   
+                   {/* Inner Bar with Gradient & Pulse */}
                    <div 
-                      className={`h-full rounded-full transition-all duration-1000 ease-out ${
+                      className={`h-full rounded-full transition-all duration-1000 ease-out relative overflow-hidden ${
                           progressAnimating 
                             ? 'bg-gradient-to-r from-yellow-400 via-orange-500 to-rose-600 shadow-[0_0_15px_rgba(244,63,94,0.8)]' 
                             : 'bg-gradient-to-r from-rose-400 to-red-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]'
                       }`}
                       style={{ 
-                          width: `${Math.min(100, (userState.collectedFragments / currentPrize.totalFragments) * 100)}%`,
-                          transform: progressAnimating ? 'scaleY(1.5)' : 'scaleY(1)'
+                          width: `${Math.min(100, (userState.collectedFragments / currentPrize.totalFragments) * 100)}%`
                       }}
                    >
+                     {/* Light Particle Sweep Effect */}
                      {progressAnimating && (
-                       <div className="w-full h-full absolute inset-0 bg-white/30 animate-pulse"></div>
+                       <div className="absolute top-0 bottom-0 w-full h-full animate-shimmer bg-gradient-to-r from-transparent via-white/80 to-transparent skew-x-12"></div>
+                     )}
+                     
+                     {/* Pulsing White Overlay */}
+                     {progressAnimating && (
+                        <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
                      )}
                    </div>
                 </div>
@@ -601,8 +613,11 @@ export default function App() {
                  <div className="absolute -top-12 w-24 h-24 bg-[#d93025] rounded-full border-4 border-[#ffd700] flex items-center justify-center shadow-lg">
                     <span className="text-4xl text-[#ffd700] font-bold">¥</span>
                  </div>
-                 <h2 className="mt-10 text-[#ffd700] font-bold text-xl tracking-wider">恭喜获得店铺红包</h2>
-                 <p className="text-red-100 text-sm mt-1">仅限到店支付使用</p>
+                 <h2 className="mt-10 text-[#ffd700] font-bold text-xl tracking-wider text-center">
+                    恭喜获得<br/>
+                    <span className="text-white text-lg mt-1 block">{lastVisited.name} 专属红包</span>
+                 </h2>
+                 <p className="text-red-100 text-sm mt-2">仅限到店支付使用</p>
                  
                  <div className="my-6">
                     <span className="text-5xl font-black text-white">7.58</span>
